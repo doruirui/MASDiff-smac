@@ -44,14 +44,22 @@ def _maybe_seed(seed: int | None) -> None:
     except Exception:
         pass
 
-    try:
-        import torch  # type: ignore
 
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
+def _resolve_ray_value(value: Any) -> Any:
+    try:
+        import ray  # type: ignore
     except Exception:
-        pass
+        return value
+
+    object_ref_type = getattr(ray, "ObjectRef", None)
+    if object_ref_type is not None and isinstance(value, object_ref_type):
+        return ray.get(value)
+    return value
+
+
+def _safe_ray_put(value: Any) -> Any:
+    # 直接返回原对象，避免 ray.put 在当前环境中触发 Broken pipe。
+    return value
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -310,8 +318,8 @@ def build_fitness_initial_seed_data(task: dict[str, Any]) -> InitialPopulationSe
 
     import ray  # type: ignore
 
-    environment: Environment = ray.get(task["environment_ref"])
-    dqn_module: DqnModule = ray.get(task["dqn_module_ref"])
+    environment: Environment = _resolve_ray_value(task["environment_ref"])
+    dqn_module: DqnModule = _resolve_ray_value(task["dqn_module_ref"])
     num_agents = int(task["num_agents"])
     index = int(task["index"])
 
@@ -334,10 +342,10 @@ def evaluate_fitness_for_reward(task: dict[str, Any]) -> float:
 
     import ray  # type: ignore
 
-    environment: Environment = ray.get(task["environment_ref"])
-    dqn_module: DqnModule = ray.get(task["dqn_module_ref"])
-    metric: Metric = ray.get(task["metric_ref"])
-    q = ray.get(task["q_ref"])
+    environment: Environment = _resolve_ray_value(task["environment_ref"])
+    dqn_module: DqnModule = _resolve_ray_value(task["dqn_module_ref"])
+    metric: Metric = _resolve_ray_value(task["metric_ref"])
+    q = _resolve_ray_value(task["q_ref"])
 
     seed_data = _coerce_seed_population_item(task["seed_data"], index=int(task["index"]))
     rewards = task["rewards"]
@@ -428,8 +436,8 @@ def calculate_fitness_based_on_rewards(
             print(f"读取初始种群缓存: {population_path}")
         else:
             print(f"未找到可用初始种群缓存，开始创建: {population_path}")
-            environment_ref = ray.put(environment)
-            dqn_module_ref = ray.put(dqn_module)
+            environment_ref = _safe_ray_put(environment)
+            dqn_module_ref = _safe_ray_put(dqn_module)
             init_tasks = [
                 {
                     "index": i,
@@ -456,10 +464,10 @@ def calculate_fitness_based_on_rewards(
             )
             print(f"初始种群缓存已保存: {population_path}")
 
-        environment_ref = ray.put(environment)
-        dqn_module_ref = ray.put(dqn_module)
-        metric_ref = ray.put(metric)
-        q_ref = ray.put(q)
+        environment_ref = _safe_ray_put(environment)
+        dqn_module_ref = _safe_ray_put(dqn_module)
+        metric_ref = _safe_ray_put(metric)
+        q_ref = _safe_ray_put(q)
         fitness_tasks = [
             {
                 "index": i,

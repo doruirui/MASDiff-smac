@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import pickle
+from dataclasses import dataclass
 from dataclasses import asdict, is_dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,71 @@ from src.evolution.base import EliteSelector
 from src.metrics.base import Metric
 from src.pipeline.types import Individual, Population
 from src.q.base import QProvider
+
+
+_INITIAL_POPULATION_CACHE_VERSION = 2
+
+
+@dataclass
+class _CachedInitialIndividual:
+    tau: Any
+    rewards: Any
+    rho: float
+    metadata: dict[str, Any]
+
+
+def _strip_initial_population_metadata(
+    population: Population,
+) -> list[dict[str, Any]]:
+    """
+    Keep only fields that are actually consumed by the only-astar evolution path.
+
+    Required later:
+    - tau / rewards / rho
+    - simulation_data only for the current best individual, because
+      step_record_best_simulation_data_if_improved() reads it immediately after load.
+
+    Explicitly dropped from cache:
+    - experience_buffers
+    - policies
+    - non-essential metadata such as initial_index / parent_rho / iteration_k
+    """
+    if len(population) == 0:
+        return []
+
+    best_index = max(range(len(population)), key=lambda idx: float(population[idx].rho))
+    cached: list[dict[str, Any]] = []
+    for idx, ind in enumerate(population):
+        metadata: dict[str, Any] = {}
+        if idx == best_index:
+            simulation_data = getattr(ind, "metadata", {}).get("simulation_data")
+            if simulation_data is not None:
+                metadata["simulation_data"] = simulation_data
+        cached.append(
+            {
+                "tau": ind.tau,
+                "rewards": ind.rewards,
+                "rho": float(ind.rho),
+                "metadata": metadata,
+            }
+        )
+    return cached
+
+
+def _restore_initial_population(payload: list[dict[str, Any]]) -> Population:
+    population: Population = []
+    for item in payload:
+        population.append(
+            Individual(
+                tau=item["tau"],
+                rewards=item["rewards"],
+                rho=float(item["rho"]),
+                experience_buffers=[],
+                policies=[],
+                metadata=dict(item.get("metadata") or {}),
+            )
+        )
+    return population
 
 
 # =========================
@@ -125,6 +191,12 @@ def step_3_4_load_initial_population(population_path: str) -> Population:
     with p.open("rb") as f:
         population = pickle.load(f)
 
+    if isinstance(population, dict) and int(population.get("cache_version", -1)) == _INITIAL_POPULATION_CACHE_VERSION:
+        cached_population = population.get("population")
+        if not isinstance(cached_population, list):
+            raise TypeError(f"初始种群文件内容无效: {p}")
+        return _restore_initial_population(cached_population)
+
     if not isinstance(population, list) or not all(isinstance(ind, Individual) for ind in population):
         raise TypeError(f"初始种群文件内容无效: {p}")
 
@@ -154,7 +226,13 @@ def step_3_4_save_initial_population(population: Population, *, population_path:
         p.parent.mkdir(parents=True, exist_ok=True)
 
     with p.open("wb") as f:
-        pickle.dump(population, f)
+        pickle.dump(
+            {
+                "cache_version": _INITIAL_POPULATION_CACHE_VERSION,
+                "population": _strip_initial_population_metadata(population),
+            },
+            f,
+        )
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -274,6 +352,24 @@ def _append_simulation_data_to_csv(simulation_data: Any, csv_path: str = "output
         writer.writerow([json.dumps(_to_jsonable(simulation_data), ensure_ascii=False)])
 
 
+def _overwrite_simulation_data_csv(simulation_data: Any, csv_path: str) -> None:
+    """
+    覆盖写入单个 simulation_data 到 CSV 文件。
+
+    输出格式与 outputs/simulation_data.csv 保持一致：
+    - 仅包含一列表头 simulation_data
+    - 第二行写入一条 JSON 字符串
+    """
+    p = Path(csv_path)
+    if p.parent != Path("."):
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+    with p.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["simulation_data"])
+        writer.writerow([json.dumps(_to_jsonable(simulation_data), ensure_ascii=False)])
+
+
 def step_4_5_simulate_and_compute_rho(
     env: Environment,
     policies: list[Any],
@@ -312,6 +408,63 @@ def step_4_build_individual(
         experience_buffers=experience_buffers,
         policies=policies,
         metadata={},
+    )
+
+
+def step_4_build_only_astar_runtime_individual(
+    *,
+    tau: Any,
+    rewards: Any,
+    rho: float,
+    simulation_data: Any | None = None,
+) -> Individual:
+    """
+    Build the lightweight runtime individual used by the only-astar path.
+
+    This path only needs:
+    - tau / rewards / rho for evolution and export
+    - simulation_data for best-simulation CSV tracking
+
+    It intentionally drops:
+    - experience_buffers
+    - policies
+    - non-essential metadata
+    """
+    metadata: dict[str, Any] = {}
+    if simulation_data is not None:
+        metadata["simulation_data"] = simulation_data
+    return Individual(
+        tau=tau,
+        rewards=rewards,
+        rho=rho,
+        experience_buffers=[],
+        policies=[],
+        metadata=metadata,
+    )
+
+
+def step_4_evaluate_only_astar_reward(
+    env: Environment,
+    rewards: Any,
+    *,
+    q: Any,
+    metric: Metric,
+) -> Individual:
+    """
+    使用给定奖励矩阵 R 评估一个 only-astar 运行时个体。
+
+    流程：
+    - 先跑一次 simulate_collect(...) 获取 Tau
+    - 再跑 simulate_evaluate(...) 获取 simulation_data 与 rho
+    - 返回轻量运行时个体
+    """
+    _, tau = step_4_1_simulate_collect(env, rewards)
+    simulation_data, rho = step_4_3_simulate_and_compute_rho(env, rewards, q=q, metric=metric)
+    return step_4_build_only_astar_runtime_individual(
+        tau=tau,
+        rewards=rewards,
+        rho=float(rho),
+        simulation_data=simulation_data,
     )
 
 
@@ -496,6 +649,37 @@ def step_5_6_record_best_rho(population: Population, *, iteration_k: int, csv_pa
         writer.writerow([iteration_k, best_rho])
 
     return population, best_rho
+
+
+def step_record_best_simulation_data_if_improved(
+    population: Population,
+    *,
+    csv_path: str,
+    best_rho_so_far: float | None = None,
+) -> tuple[Population, float, bool]:
+    """
+    将“当前全局最优个体”的 simulation_data 覆盖写入额外的 CSV 文件。
+
+    规则：
+    - 若当前种群中的最优个体优于 best_rho_so_far，则覆盖写入 csv_path；
+    - 若没有更优个体出现，则不改动该文件；
+    - 返回更新后的全局最优 rho，以及本次是否发生覆盖写入。
+    """
+    if len(population) == 0:
+        raise ValueError("population 不能为空，无法记录最优 simulation_data")
+
+    best_individual = max(population, key=lambda ind: float(ind.rho))
+    best_rho = float(best_individual.rho)
+
+    if best_rho_so_far is not None and best_rho <= float(best_rho_so_far):
+        return population, float(best_rho_so_far), False
+
+    simulation_data = getattr(best_individual, "metadata", {}).get("simulation_data")
+    if simulation_data is None:
+        raise ValueError("最优个体缺少 metadata['simulation_data']，无法写入最优 simulation_data CSV")
+
+    _overwrite_simulation_data_csv(simulation_data, csv_path)
+    return population, best_rho, True
 
 
 def step_6_simulate_best_and_export_routes(

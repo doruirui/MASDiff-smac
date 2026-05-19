@@ -8,36 +8,37 @@
 seed: 42
 
 algorithm:
-  M: 100
-  N: 1557
-  K: 60
+  M: 200
+  N: 2336
+  K: 1
 
 logging:
   best_rho_csv_path: "outputs/sumo_ryl_only_astar_nov_best_rho_history.csv"
   initial_population_path: "outputs/sumo_ryl_only_astar_nov_initial_population.pkl"
 
 q_provider:
-  class_path: "src.q.sumo_ryl_q:SumoRylQProvider"
+  class_path: "src.q.sumo_ryl_nov_q:SumoRylQProvider"
   kwargs:
-    # ChongQing-114.rou.xml 中 vehicle 数量 = 1557
-    num_car: 1557
-    cache_path: "outputs/q_sumo_ryl.pt"
+    # testsumo.rou.xml 中 vehicle 数量 = 2336
+    num_car: 2336
+    cache_path: "outputs/Q_nov.pickle"
     force_recompute: false
 
 environment:
-  class_path: "src.environments.sumo_ryl:SumoRylEnvironment"
+  class_path: "src.environments.sumo_ryl_nov:SumoRylNovEnvironment"
   kwargs:
     # --- SUMO 基础配置 ---
-    sumo_config: "maps/ChongQing-114.sumocfg"
-    net_file: "maps/ChongQing-114.net.xml"
-    route_file: "maps/ChongQing-114.rou.xml"
+    sumo_config: "maps/testsumo.sumocfg"
+    net_file: "maps/testsumo.net.xml"
+    route_file: "maps/testsumo.rou.xml"
     sumo_use_gui: false
     # sumo_binary: "sumo"
 
     # --- 仿真控制 ---
+    # testsumo.rou.xml 中注释区间为 begin=0, end=600
     end_tick: 600
-    update_interval: 6
-    sample_interval: 6
+    update_interval: 600
+    sample_interval: 600
 
     # 模型平时放 CPU；推理时按 policy_device 临时迁移
     move_policies_to_device: false
@@ -51,33 +52,21 @@ environment:
       # - "--seed"
       # - "0"
 
-diffusion_model:
-  class_path: "src.diffusion.sumo_ryl_diffusion:SumoRylDiffusionModel"
-  kwargs:
-    # 生成 R 的形状为 [num_car, num_road]
-    num_car: 1557
-    device: "cuda"
-    sampler: "ddim"
-    schedule_type: "cosine"
-    num_timesteps: 1000
-    inference_steps: 50
-    ddim_eta: 0.0
-    num_epochs: 50
-    batch_size: 32
-    lr: 0.0001
-
 evox:
   algorithm:
-    class_path: "evox.algorithms:DE"
+    class_path: "evox.algorithms:OpenES"
     kwargs:
       pop_size: 64
+      learning_rate: 0.05
+      noise_stdev: 0.15
+      optimizer: "adam"
+      mirrored_sampling: true
       device: "cuda"
   reward_min: 0.0
   reward_max: 5.0
   repo_path: "/mnt/d/evox"
   init_strategy: "best"
   device: "cuda"
-  allow_shim_fallback: false
 
 metric:
   class_path: "src.metrics.sumo_ryl_metric:SumoRylMetric"
@@ -91,8 +80,10 @@ parallel_executor:
     ray_init_kwargs:
       include_dashboard: false
       _temp_dir: "/tmp/r"
-      num_cpus: 25
-      object_store_memory: 268435456
+      num_cpus: 32
+      num_gpus: 3
+      object_store_memory: 536870912
+
     task_options_by_name:
       build_initial_individual:
         num_cpus: 3
@@ -111,9 +102,6 @@ parallel_executor:
     ray_startup_retries: 6
     ray_startup_retry_delay_s: 5.0
     raylet_start_wait_time_s: 300
-    enable_eval_gpu: true
-    eval_gpu_per_task: 0.1
-    fallback_max_workers: 25
 
 extra:
   note: "sumo_ryl_only_astar_nov 配置示例（道路累计过车数版本，EvoX + OpenES）"

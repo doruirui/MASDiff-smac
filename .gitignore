@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+.venv*
+venv*
+env*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Project specific
+.helloagents/
+output/
+outputs/
+smac/
+*.ipynb_checkpoints/
+*.pickle
+*.pt
+*.npy
+*.csv
+*.pkl
+
+# OS
+.DS_Store
+Thumbs.db

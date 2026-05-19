@@ -1,0 +1,78 @@
+# StarCraft II SMAC v1 配置文件，使用 OpenES 进化算法
+seed: 42
+
+algorithm:
+  M: 20                    # 总迭代次数200
+  N: 20000                  # 策略网络参数量
+  K: 1
+
+logging:
+  best_rho_csv_path: "outputs/starcraft_best_rho.csv"
+  initial_population_path: "outputs/starcraft_initial_population.pkl"
+
+# 占位 QProvider（星际不需要 Q 表）
+q_provider:
+  class_path: "src.q.starcraft_null_q:StarcraftNullQProvider"
+  kwargs:
+    param_dim: 11520          # 必须与 algorithm.N 一致
+
+environment:
+  class_path: "src.environments.starcraft_smac:StarcraftSMACEnvironment"
+  kwargs:
+    map_name: "8m"            # SMAC 地图名
+    step_mul: 8               # 动作重复次数
+    difficulty: "7"           # 难度
+    seed: 42
+    reward_sparse: true       # 使用稀疏胜率奖励
+    num_episodes_per_eval: 5  # 每个体评估5局取平均5
+
+evox:
+  algorithm:
+    class_path: "evox.algorithms.OpenES"
+    kwargs:
+      pop_size: 16         #64
+      learning_rate: 0.05
+      noise_stdev: 0.1
+      optimizer: "adam"
+      mirrored_sampling: true
+      device: "cpu"           # 使用 CPU
+  reward_min: 0.0
+  reward_max: 1.0
+  repo_path: ""               # 留空则使用本地 shim
+  init_strategy: "best"
+  device: "cpu"               # 全局设备
+
+metric:
+  class_path: "src.metrics.starcraft_metric:StarcraftMetric"
+  kwargs:
+    transform: "win_rate"     # 胜率转换
+    eps: 1e-8
+
+parallel_executor:
+  class_path: "src.parallel.ray_executor:RayExecutor"
+  kwargs:
+    ray_init_kwargs:
+      include_dashboard: false
+      _temp_dir: "/tmp/ray"
+      num_cpus: 32
+      num_gpus: 0              # 无 GPU 需求
+      object_store_memory: 536870912
+    task_options_by_name:
+      build_initial_individual:
+        num_cpus: 2
+        num_gpus: 0
+      evaluate_reward_candidate:
+        num_cpus: 2
+        num_gpus: 0
+    default_task_options:
+      num_cpus: 1
+    show_progress: true
+    desc: "RayExecutor StarCraft"
+    max_updates: 100
+    max_inflight_tasks: 4
+    ray_startup_retries: 6
+    ray_startup_retry_delay_s: 5.0
+    raylet_start_wait_time_s: 300
+
+extra:
+  note: "StarCraft II SMAC v1 微操，OpenES 优化策略网络，适应度为胜率"

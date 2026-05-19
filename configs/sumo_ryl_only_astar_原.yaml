@@ -6,7 +6,7 @@ seed: 42
 algorithm:
   M: 100
   N: 1557
-  K: 300
+  K: 1
 
 elite:
   elite_count: 20
@@ -16,8 +16,8 @@ truncated_diffusion:
   denoise_steps: 5
 
 logging:
-  best_rho_csv_path: "outputs/sumo_ryl_best_rho_history.csv"
-  initial_population_path: "outputs/sumo_ryl_initial_population.pkl"
+  best_rho_csv_path: "outputs/sumo_ryl_only_astar_best_rho_history.csv"
+  initial_population_path: "outputs/sumo_ryl_only_astar_initial_population.pkl"
 
 q_provider:
   class_path: "src.q.sumo_ryl_q:SumoRylQProvider"
@@ -48,6 +48,9 @@ environment:
     move_policies_to_device: false
     policy_device: "cpu"   # auto/cpu/cuda/cuda:0...
 
+    # R + 纯Astar 路径规划的奖励影响权重
+    reward_astar_weight: 10.0
+
     # --- vehicle 绑定方式（三选一，优先级：controlled_vehicle_ids > route_file > 运行时 vehicle.getIDList）---
     # controlled_vehicle_ids:
     #   - "veh0"
@@ -64,6 +67,7 @@ environment:
       # 如果你要覆盖它们，请在这里显式设置对应 option（且不要重复写同一个 option）
 
 dqn_module:
+  # 兼容保留：当前主流程不会再调用 DQN 训练/推理
   class_path: "src.dqn.sumo_ryl_dqn:SumoRylDqnModule"
   kwargs:
     # 动作空间大小（道路数）
@@ -126,7 +130,7 @@ parallel_executor:
     # - object_store_memory：对象存储（Plasma）大小，单位 bytes（过大/过小都会影响性能）
     ray_init_kwargs:
       num_cpus: 50
-      num_gpus: 3
+      num_gpus: 2
       object_store_memory: 322122547200
 
     # 按“任务名”（runner.py 里的函数名）为 Ray task 配置资源：
@@ -138,10 +142,10 @@ parallel_executor:
     task_options_by_name:
       build_initial_individual:
         num_cpus: 2.5
-        num_gpus: 0.3
+        num_gpus: 0.1
       mutate_one:
         num_cpus: 2.5
-        num_gpus: 0.3
+        num_gpus: 0.1
 
     # 没有在 task_options_by_name 中单独配置的任务，将使用默认 task options
     default_task_options:
@@ -152,5 +156,5 @@ parallel_executor:
     max_updates: 20
 
 extra:
-  note: "sumo_ryl 配置示例"
+  note: "sumo_ryl 纯Astar流程配置示例"
 

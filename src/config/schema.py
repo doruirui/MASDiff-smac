@@ -39,6 +39,19 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True)
+class EvoXConfig:
+    """EvoX 进化后端配置。"""
+
+    algorithm: ModuleSpec
+    reward_min: float
+    reward_max: float
+    repo_path: str | None
+    init_strategy: str
+    device: str | None
+    allow_shim_fallback: bool = True
+
+
+@dataclass(frozen=True)
 class MasDiffConfig:
     """
     一套完整模块配置（一个 YAML 对应一套）。
@@ -53,15 +66,18 @@ class MasDiffConfig:
     # 可自定义模块（用户提供 class_path + kwargs）
     q_provider: ModuleSpec
     environment: ModuleSpec
-    dqn_module: ModuleSpec
-    diffusion_model: ModuleSpec
-    elite_selector: ModuleSpec
+    dqn_module: ModuleSpec | None
+    diffusion_model: ModuleSpec | None
+    elite_selector: ModuleSpec | None
     metric: ModuleSpec
     parallel_executor: ModuleSpec
 
-    # 进化/变异相关配置（由主流程使用；具体行为由模块实现）
+    # 兼容保留：旧进化链路配置
     elite: EliteConfig
     truncated_diffusion: TruncatedDiffusionConfig
+
+    # 当前进化后端
+    evox: EvoXConfig
 
     # 记录/日志相关配置
     logging: LoggingConfig

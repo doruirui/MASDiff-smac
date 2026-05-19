@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any
+from src.pipeline.types import Individual
 
-
+class Environment(ABC):
+    @abstractmethod
+    def evaluate(self, individual: Individual) -> Individual:
+        """给一个个体的参数，返回评估后的个体（含奖励和 rho）"""
+        pass
 class Environment(ABC):
     """
     环境/仿真器抽象接口（用户自定义实现）。

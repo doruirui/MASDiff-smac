@@ -1,0 +1,14 @@
+[33mcommit 95ef8d64ded476fef6c9e4bb667c68dd7da52065[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32monly_astar[m[33m, [m[1;31morigin/only_astar[m[33m)[m
+Author: 任玉林 <756697399@qq.com>
+Date:   Wed Apr 1 14:04:54 2026 +0800
+
+    fix:修复初始化种群的逻辑，解决R对车辆路径规划影响不大的问题。
+
+ configs/sumo_ryl_only_astar.yaml                   |  2 [32m+[m[31m-[m
+ src/environments/sumo_ryl.py                       | 35 [32m+++++++++[m[31m----[m
+ src/parallel/ray_tasks.py                          | 15 [32m++++[m[31m--[m
+ src/pipeline/runner.py                             | 15 [32m++++[m[31m--[m
+ src/pipeline/steps.py                              | 58 [32m++++++++++++++++++++[m[31m--[m
+ "\344\270\273\346\265\201\347\250\213.txt"         |  4 [32m+[m[31m-[m
+ ...257\264\346\230\216\346\226\207\346\241\243.md" |  6 [32m+[m[31m--[m
+ 7 files changed, 106 insertions(+), 29 deletions(-)

@@ -243,7 +243,7 @@ class SumoRylNovEnvironment(SumoRylEnvironment):
                         planned_route = self._plan_route_on_appearance(
                             policy=policies[car_idx] if car_idx < len(policies) else None,
                             reward_row=self._get_reward_row(rewards, car_idx),
-                            sim_conn=sim_conn,
+                            traci_conn=sim_conn,
                             vehicle_id=veh_id,
                             start_edge=start_edge,
                             dest_edge=dest_edge,
@@ -355,7 +355,7 @@ class SumoRylNovEnvironment(SumoRylEnvironment):
                         planned_route = self._plan_route_on_appearance(
                             policy=policies[car_idx] if car_idx < len(policies) else None,
                             reward_row=self._get_reward_row(rewards, car_idx),
-                            sim_conn=sim_conn,
+                            traci_conn=sim_conn,
                             vehicle_id=veh_id,
                             start_edge=start_edge,
                             dest_edge=dest_edge,
@@ -477,7 +477,7 @@ class SumoRylNovEnvironment(SumoRylEnvironment):
                         planned_route = self._plan_route_on_appearance(
                             policy=policies[car_idx] if car_idx < len(policies) else None,
                             reward_row=self._get_reward_row(rewards, car_idx),
-                            sim_conn=sim_conn,
+                            traci_conn=sim_conn,
                             vehicle_id=veh_id,
                             start_edge=start_edge,
                             dest_edge=dest_edge,

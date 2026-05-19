@@ -8,6 +8,7 @@ import yaml
 from src.config.schema import (
     AlgorithmConfig,
     EliteConfig,
+    EvoXConfig,
     LoggingConfig,
     MasDiffConfig,
     TruncatedDiffusionConfig,
@@ -27,6 +28,14 @@ def _as_modulespec(d: dict[str, Any], *, key: str) -> ModuleSpec:
     return ModuleSpec(class_path=str(class_path), kwargs=kwargs)
 
 
+def _optional_modulespec(raw: Any, *, key: str) -> ModuleSpec | None:
+    if raw is None:
+        return None
+    if isinstance(raw, dict) and not raw:
+        return None
+    return _as_modulespec(raw, key=key)
+
+
 def load_config(path: str | Path) -> MasDiffConfig:
     """
     读取一套 YAML 配置并转换为 MasDiffConfig。
@@ -42,6 +51,8 @@ def load_config(path: str | Path) -> MasDiffConfig:
     elite_raw = raw.get("elite") or {}
     trunc_raw = raw.get("truncated_diffusion") or {}
     logging_raw = raw.get("logging") or {}
+    evox_raw = raw.get("evox") or {}
+    evox_algo_raw = evox_raw.get("algorithm") or {}
 
     cfg = MasDiffConfig(
         seed=int(raw.get("seed", 0)),
@@ -52,15 +63,24 @@ def load_config(path: str | Path) -> MasDiffConfig:
         ),
         q_provider=_as_modulespec(raw.get("q_provider") or {}, key="q_provider"),
         environment=_as_modulespec(raw.get("environment") or {}, key="environment"),
-        dqn_module=_as_modulespec(raw.get("dqn_module") or {}, key="dqn_module"),
-        diffusion_model=_as_modulespec(raw.get("diffusion_model") or {}, key="diffusion_model"),
-        elite_selector=_as_modulespec(raw.get("elite_selector") or {}, key="elite_selector"),
+        dqn_module=_optional_modulespec(raw.get("dqn_module"), key="dqn_module"),
+        diffusion_model=_optional_modulespec(raw.get("diffusion_model"), key="diffusion_model"),
+        elite_selector=_optional_modulespec(raw.get("elite_selector"), key="elite_selector"),
         metric=_as_modulespec(raw.get("metric") or {}, key="metric"),
         parallel_executor=_as_modulespec(raw.get("parallel_executor") or {}, key="parallel_executor"),
         elite=EliteConfig(elite_count=int(elite_raw.get("elite_count", 1))),
         truncated_diffusion=TruncatedDiffusionConfig(
             add_noise_steps=int(trunc_raw.get("add_noise_steps", 1)),
             denoise_steps=int(trunc_raw.get("denoise_steps", 1)),
+        ),
+        evox=EvoXConfig(
+            algorithm=_as_modulespec(evox_algo_raw, key="evox.algorithm"),
+            reward_min=float(evox_raw.get("reward_min", 0.0)),
+            reward_max=float(evox_raw.get("reward_max", 5.0)),
+            repo_path=(str(evox_raw["repo_path"]) if evox_raw.get("repo_path") else None),
+            init_strategy=str(evox_raw.get("init_strategy", "best")),
+            device=(str(evox_raw["device"]) if evox_raw.get("device") else None),
+            allow_shim_fallback=bool(evox_raw.get("allow_shim_fallback", True)),
         ),
         logging=LoggingConfig(
             best_rho_csv_path=str(logging_raw.get("best_rho_csv_path", "outputs/best_rho_history.csv")),
@@ -82,6 +102,10 @@ def load_config(path: str | Path) -> MasDiffConfig:
         raise ValueError("algorithm.K 必须 >= 0")
     if cfg.elite.elite_count <= 0:
         raise ValueError("elite.elite_count 必须 > 0")
+    if cfg.evox.reward_max < cfg.evox.reward_min:
+        raise ValueError("evox.reward_max 必须 >= evox.reward_min")
+    if cfg.evox.init_strategy not in {"best", "mean"}:
+        raise ValueError("evox.init_strategy 仅支持 best / mean")
 
     return cfg
 

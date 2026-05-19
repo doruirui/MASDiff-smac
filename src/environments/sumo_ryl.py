@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from src.environments.base import Environment
 
@@ -47,10 +50,13 @@ class SumoRylEnvironment(Environment):
         controlled_vehicle_ids: list[str] | None = None,
         traci_label: str | None = None,
         extra_sumo_args: list[str] | None = None,
+        sumo_start_retries: int = 2,
+        sumo_start_retry_delay: float = 0.5,
+        traci_auto_unique_label: bool = True,
     ) -> None:
-        self.sumo_config = str(sumo_config)
-        self.net_file = str(net_file) if net_file else None
-        self.route_file = str(route_file) if route_file else None
+        self.sumo_config = self._resolve_path_for_workers(str(sumo_config))
+        self.net_file = self._resolve_path_for_workers(str(net_file)) if net_file else None
+        self.route_file = self._resolve_path_for_workers(str(route_file)) if route_file else None
         self.sumo_use_gui = bool(sumo_use_gui)
         self.sumo_binary = str(sumo_binary) if sumo_binary else None
         self.end_tick = int(end_tick)
@@ -62,6 +68,9 @@ class SumoRylEnvironment(Environment):
         self.controlled_vehicle_ids = list(controlled_vehicle_ids) if controlled_vehicle_ids else None
         self.traci_label = str(traci_label) if traci_label else None
         self.extra_sumo_args = list(extra_sumo_args) if extra_sumo_args else []
+        self.sumo_start_retries = int(sumo_start_retries)
+        self.sumo_start_retry_delay = float(sumo_start_retry_delay)
+        self.traci_auto_unique_label = bool(traci_auto_unique_label)
 
         if self.end_tick <= 0:
             raise ValueError("end_tick 必须 > 0")
@@ -69,6 +78,50 @@ class SumoRylEnvironment(Environment):
             raise ValueError("update_interval 必须 > 0")
         if self.sample_interval <= 0:
             raise ValueError("sample_interval 必须 > 0")
+        if self.sumo_start_retries < 0:
+            raise ValueError("sumo_start_retries 必须 >= 0")
+        if self.sumo_start_retry_delay < 0:
+            raise ValueError("sumo_start_retry_delay 必须 >= 0")
+
+    def _make_traci_label(self, attempt: int) -> str | None:
+        if self.traci_label:
+            return self.traci_label
+        if not self.traci_auto_unique_label:
+            return None
+        return f"sumo-{os.getpid()}-{attempt}-{uuid4().hex[:8]}"
+
+    @staticmethod
+    def _cleanup_traci_connection_by_label(traci_mod: Any, label: str | None) -> None:
+        if not label:
+            return None
+        try:
+            conns = getattr(traci_mod, "_connections", None)
+            if isinstance(conns, dict):
+                conn = conns.get(label)
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                conns.pop(label, None)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _resolve_path_for_workers(path_str: str) -> str:
+        """Resolve relative paths robustly across Ray worker cwd differences."""
+        p = Path(path_str).expanduser()
+        if p.is_absolute():
+            return str(p)
+
+        repo_root = Path(__file__).resolve().parents[2]
+        candidates = [Path.cwd() / p, repo_root / p]
+        for c in candidates:
+            if c.exists():
+                return str(c.resolve())
+
+        # Keep a deterministic absolute fallback even when file does not exist yet.
+        return str((repo_root / p).resolve())
 
     def _resolve_policy_device(self, torch_mod) -> str:
         """
@@ -438,10 +491,22 @@ class SumoRylEnvironment(Environment):
     # SUMO/libsumo & 路网工具
     # -------------------------
     def _start_sumo(self):
+        backend = "libsumo"
         try:
             import libsumo as traci  # type: ignore
-        except Exception as e:  # pragma: no cover
-            raise ImportError("无法导入 libsumo。请确认已安装 libsumo，并已配置 SUMO 的 Python 工具链。") from e
+            if not hasattr(traci, "start"):
+                raise AttributeError("libsumo 缺少 start()，需要回退到 traci")
+        except Exception as e_libsumo:  # pragma: no cover
+            # 部分环境虽然能导入 libsumo，但缺少启动接口；此时自动回退到 traci。
+            try:
+                import traci  # type: ignore
+
+                backend = "traci"
+            except Exception as e_traci:  # pragma: no cover
+                raise ImportError(
+                    "无法导入 libsumo 或 traci。请确认已安装 SUMO Python 工具链，"
+                    "并把 SUMO 的 tools 目录加入 PYTHONPATH。"
+                ) from e_traci
 
         # 尽量不依赖外部 config.py：全部由 kwargs 传入
         sumo_cfg = Path(self.sumo_config)
@@ -500,15 +565,45 @@ class SumoRylEnvironment(Environment):
         sumo_args = deduped
 
         # libsumo 不支持 traci 的多连接标签模式；当前项目并行依赖多进程（如 Ray worker）隔离实例
-        if self.traci_label:
+        if self.traci_label and backend == "libsumo":
             raise ValueError(
                 "当前 SUMO 环境已切换为 libsumo，`traci_label` 不再可用。"
                 "如需并行，请使用多进程/多 worker 隔离实例，而不是在单进程内使用 label 多连接。"
             )
+
+        if backend == "traci":
+            retries = int(self.sumo_start_retries)
+            delay = float(self.sumo_start_retry_delay)
+            last_error: Exception | None = None
+
+            for attempt in range(retries + 1):
+                label = self._make_traci_label(attempt)
+                try:
+                    if label:
+                        traci.start(sumo_args, label=label)
+                        return traci.getConnection(label)
+
+                    traci.start(sumo_args)
+                    return traci
+                except Exception as e:
+                    last_error = e
+                    self._cleanup_traci_connection_by_label(traci, label)
+                    if attempt >= retries:
+                        break
+                    if delay > 0.0:
+                        time.sleep(delay * float(attempt + 1))
+
+            cmd_preview = " ".join(str(x) for x in sumo_args)
+            raise RuntimeError(
+                "SUMO 启动失败（traci）。"
+                f" 已重试 {retries} 次；最后错误: {last_error}; 命令: {cmd_preview}"
+            ) from last_error
+
         traci.start(sumo_args)
         return traci
 
     def _close_sumo(self, traci_conn) -> None:
+        label = getattr(traci_conn, "_label", None)
         try:
             if hasattr(traci_conn, "close"):
                 traci_conn.close()
@@ -517,6 +612,14 @@ class SumoRylEnvironment(Environment):
                 traci_conn.close()  # type: ignore[attr-defined]
         except Exception:
             # 避免因关闭异常影响上层流程
+            pass
+
+        # traci 连接异常关闭时，可能遗留 _connections 项，后续复用同 label 会触发隐性失败。
+        try:
+            import traci as traci_mod  # type: ignore
+
+            self._cleanup_traci_connection_by_label(traci_mod, label)
+        except Exception:
             return None
 
     def _load_network_and_edges(self, traci_conn) -> tuple[list[str], dict[str, list[str]]]:

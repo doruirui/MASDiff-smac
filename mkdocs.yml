@@ -1,2 +1,10 @@
-site_name: MASDiff-SMAC
-docs_dir: docs
+site_name: "MASDiff 星际争霸文档"
+theme:
+  name: material  # 必须使用 material 主题
+
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format

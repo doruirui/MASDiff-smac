@@ -16,6 +16,7 @@ env*
 .helloagents/
 output/
 outputs/
+site/
 smac/
 *.ipynb_checkpoints/
 *.pickle
